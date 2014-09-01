@@ -3,6 +3,29 @@ Android Beacon Library
 
 An Android library providing APIs to interact with beacons  
 
+## Samsung BLE SDK Support
+
+This version of the library has included support for the Samsung BLE SDK for Samsung devices running
+4.2.x.  Any device running 4.3+ will automatically use the native Android BLE SDKs.  The Samsung
+BLE SDKs are based on the BlueZ stack, not the newer Bluedroid stack, and are too slow to constantly
+scan for beacons.  Tests show that only 2 BLE advertising packets per second may be scanned by the
+Samsung BLE SDK before it starts to fall behind.  The recommended work-around it to configure this
+library to slow down scans when using the Samsung BLE SDK.  Even when doing so, if a large number of
+beacons are around, processing may back up.  If enabling Samsung BLE SDK support, be sure to test
+your app thoroughly on Samsung 4.2.x devices to verify proper behavior.
+
+Because of these limitations, Samsung support is disabled by default.  In order to enable it, you must
+call:
+
+    mBeaconManager.setSamsungSdkAllowed(true);
+    if (mBeaconManager.isSamsungSdkCompatible()) {
+    	// if this device only has the Samsung BLE SDK then we must slow down
+     	// scans.  These settings appears to keep the Samsung SDK from getting behind when two or
+     	// fewer beacons are around advertising at 10 Hz.
+        mBeaconManager.setForegroundScanPeriod(1100l); // 1.1 seconds
+        mBeaconManager.setForegroundBetweenScanPeriod(10000l); // 10 seconds
+    }
+
 ## Changes from the 0.x library version
 
 This library has changed significantly from the 0.x library version and is now designed to work with
