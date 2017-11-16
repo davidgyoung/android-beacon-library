@@ -13,6 +13,7 @@ import android.content.ServiceConnection;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.RemoteException;
+import android.support.v4.content.LocalBroadcastManager;
 
 import org.altbeacon.beacon.Beacon;
 import org.altbeacon.beacon.BeaconConsumer;
@@ -31,6 +32,7 @@ import java.util.List;
 
 @TargetApi(18)
 public class BeaconManagerV3 {
+    public static final String RANGING_NOTIFICATION_NAME = "org.altbeacon.BeaconManagerV3.ranging_notification";
     private static final String TAG = "BeaconManagerV3";
     private static  BeaconManagerV3 sInstance;
     private BeaconManager mBeaconManager;
@@ -410,13 +412,20 @@ public class BeaconManagerV3 {
         }
 
         @Override
-        public void didRangeBeaconsInRegion(Collection<Beacon> collection, Region region) {
-            LogManager.d(TAG, "didRangeBeacons count="+collection.size());
+        public void didRangeBeaconsInRegion(Collection<Beacon> beacons, Region region) {
+            LogManager.d(TAG, "didRangeBeacons count="+beacons.size());
+            this.deliverRangingNotification(beacons);
             synchronized (mRangeNotifiers) {
                 for (RangeNotifier n : mRangeNotifiers) {
-                    n.didRangeBeaconsInRegion(collection, region);
+                    n.didRangeBeaconsInRegion(beacons, region);
                 }
             }
+        }
+
+        private void deliverRangingNotification(Collection<Beacon> beacons) {
+            Intent intent = new Intent(RANGING_NOTIFICATION_NAME);
+            intent.putExtra("detectedBeacons", new ArrayList<>(beacons));
+            LocalBroadcastManager.getInstance(mContext).sendBroadcast(intent);
         }
     }
 }
