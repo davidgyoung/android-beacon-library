@@ -2,4 +2,4 @@ jdk:
   - oraclejdk8
 install:
    - echo "Running a custom install command"
-   - ./gradlew clean publishToMavenLocal
+   - ./gradlew release; ./gradlew publishToMavenLocal
