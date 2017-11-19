@@ -424,7 +424,7 @@ public class BeaconManagerV3 {
 
         private void deliverRangingNotification(Collection<Beacon> beacons) {
             Intent intent = new Intent(RANGING_NOTIFICATION_NAME);
-            intent.putExtra("detectedBeacons", new ArrayList<>(beacons));
+            intent.putExtra("beacons", new ArrayList<>(beacons));
             LocalBroadcastManager.getInstance(mContext).sendBroadcast(intent);
         }
     }
