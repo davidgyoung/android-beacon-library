@@ -15,16 +15,10 @@ import android.os.Handler;
 import android.os.RemoteException;
 import android.support.v4.content.LocalBroadcastManager;
 
-import org.altbeacon.beacon.Beacon;
-import org.altbeacon.beacon.BeaconConsumer;
-import org.altbeacon.beacon.BeaconManager;
-import org.altbeacon.beacon.BeaconParser;
-import org.altbeacon.beacon.MonitorNotifier;
-import org.altbeacon.beacon.RangeNotifier;
-import org.altbeacon.beacon.Region;
 import org.altbeacon.beacon.logging.LogManager;
 import org.altbeacon.beacon.logging.Loggers;
-import org.altbeacon.beacon.startup.RegionBootstrap;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -34,19 +28,31 @@ import java.util.List;
 public class BeaconManagerV3 {
     public static final String RANGING_NOTIFICATION_NAME = "org.altbeacon.BeaconManagerV3.ranging_notification";
     private static final String TAG = "BeaconManagerV3";
+    @NonNull
     private static  BeaconManagerV3 sInstance;
+    @NonNull
     private BeaconManager mBeaconManager;
+    @NonNull
     private Context mContext;
     private int activeActivityCount = 0;
     private int mSecondsToDelayBackgroundTransition = 180;
     private long mLastBackgroundTransitionTime = 0l;
+    private long mLastRegionEntryOrExitTime = 0l;
     private boolean mServiceConnected = false;
+    @NonNull
     private List<Region> mRangedRegions = new ArrayList<>();
+    @NonNull
     private List<Region> mMonitoredRegions = new ArrayList<>();
+    @NonNull
     private InternalBeaconConsumer mBeaconConsumer;
+    @NonNull
     private List<RangeNotifier> mRangeNotifiers = new ArrayList<>();
+    @NonNull
     private List<MonitorNotifier> mMonitorNotifiers = new ArrayList<>();
+    @NonNull
     private BackgroundStateMonitor mBackgroundStateMonitor = new BackgroundStateMonitor();
+    @Nullable
+    private Handler mBackgroundModeEvaluationHandler = null;
 
     public static synchronized  BeaconManagerV3 getInstance(Context context) {
         if (sInstance == null) {
@@ -247,14 +253,6 @@ public class BeaconManagerV3 {
             evaluateBackgroundModeChanges();
         }
 
-        protected void switchTemporarilyToForegroundMode() {
-            LogManager.d(TAG, "New background detection.  Going into foreground mode temporarily.");
-            mLastBackgroundTransitionTime = 0;
-            evaluateBackgroundModeChanges();
-            mLastBackgroundTransitionTime = System.currentTimeMillis();
-            evaluateBackgroundModeChanges();
-        }
-
         @Override
         public void onActivityPaused(Activity activity) {
             activeActivityCount--;
@@ -283,25 +281,51 @@ public class BeaconManagerV3 {
 
 
     private void evaluateBackgroundModeChanges() {
-        long secondsSincBackgroundTransition = System.currentTimeMillis()-mLastBackgroundTransitionTime;
+        long secondsSinceBackgroundTransition = (System.currentTimeMillis()-mLastBackgroundTransitionTime) /1000;
+        long secondsSinceRegionTransition = (System.currentTimeMillis()-mLastRegionEntryOrExitTime) / 1000;
+        LogManager.d(TAG, "Evaluating background mode changes.  Secs since foreground: "+secondsSinceBackgroundTransition+".  Secs since region entry/exit: "+secondsSinceRegionTransition);
+        long secondsSinceTransition = secondsSinceBackgroundTransition < secondsSinceRegionTransition ?
+                secondsSinceBackgroundTransition : secondsSinceRegionTransition;
         if (mLastBackgroundTransitionTime == 0) {
             LogManager.d(TAG, "We are in the foreground.");
             mBeaconManager.setBackgroundMode(false);
         }
-        else if (secondsSincBackgroundTransition > mSecondsToDelayBackgroundTransition) {
-            LogManager.d(TAG, "Going to background beacon scanning mode as sufficient seconds have passed since background transition: "+secondsSincBackgroundTransition);
+        else if (secondsSinceTransition >= mSecondsToDelayBackgroundTransition) {
+            LogManager.d(TAG, "Going to background beacon scanning mode as sufficient seconds have passed since background or region transition: "+secondsSinceTransition);
             mBeaconManager.setBackgroundMode(true);
         }
         else {
-            LogManager.d(TAG, "Not enough time has passed ("+secondsSincBackgroundTransition+") since the last background transition to go to background scanning mode.  Re-evaluating in that time.");
-            // What if we go into doze mode before going into background mode?  We will end up scanning with foreground settings until user wakes up phone.
-            new Handler().postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    LogManager.d(TAG, "Waking up to evaluate background mode changes.");
-                    evaluateBackgroundModeChanges();
+            if (mBeaconManager.getBackgroundMode()) {
+                // We are in the background but we should not be.  We probably were in the background when we entered/exited a region.
+                LogManager.d(TAG, "A region or background transition has happened recently. Exiting background mode.");
+                mBeaconManager.setBackgroundMode(false);
+            }
+            else {
+                LogManager.d(TAG, "Not enough time has passed ("+secondsSinceTransition+" secs) since the last background or region transition to go to background scanning mode.");
+            }
+            long secsToWait = (mSecondsToDelayBackgroundTransition-secondsSinceTransition);
+
+            if (mBackgroundModeEvaluationHandler == null) {
+                LogManager.d(TAG, "Re-evaluating in "+secsToWait+" secs.");
+                // What if we go into doze mode before going into background mode?  We will end up scanning with foreground settings until user wakes up phone.
+                mBackgroundModeEvaluationHandler = new Handler();
+                if (!mBackgroundModeEvaluationHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        LogManager.d(TAG, "Waking up to evaluate background mode changes.");
+                        mBackgroundModeEvaluationHandler = null;
+                        evaluateBackgroundModeChanges();
+                    }
+                }, secsToWait*1000)) {
+                    LogManager.w(TAG, "Failed to schedule background mode evaluation.  Going into background mode immediately.");
+                    mBeaconManager.setBackgroundMode(true);
+                    mBackgroundModeEvaluationHandler = null;
                 }
-            }, (mSecondsToDelayBackgroundTransition-secondsSincBackgroundTransition)*1000);
+            }
+            else {
+                LogManager.d(TAG, "re-evaluation already scheduled");
+            }
+
         }
     }
 
@@ -377,29 +401,24 @@ public class BeaconManagerV3 {
         @Override
         public void didEnterRegion(Region region) {
             LogManager.d(TAG, "didEnterRegion");
-            if (mBeaconManager.getBackgroundMode()) {
-                LogManager.d(TAG, "didEnterRegion in background mode");
-                mBackgroundStateMonitor.switchTemporarilyToForegroundMode();
-                // TODO: Should we also do this on ranging detection (what if we are not monitoring?)
-                // Should we also do this on region exit like iOS does?
-            }
-            else {
-                LogManager.d(TAG, "didEnterRegion out of background mode");
-            }
+            mLastRegionEntryOrExitTime = System.currentTimeMillis();
             synchronized (mMonitorNotifiers) {
                 for (MonitorNotifier n : mMonitorNotifiers) {
                     n.didEnterRegion(region);
                 }
             }
+            evaluateBackgroundModeChanges();
         }
 
         @Override
         public void didExitRegion(Region region) {
+            mLastRegionEntryOrExitTime = System.currentTimeMillis();
             synchronized (mMonitorNotifiers) {
                 for (MonitorNotifier n : mMonitorNotifiers) {
                     n.didExitRegion(region);
                 }
             }
+            evaluateBackgroundModeChanges();
         }
 
         @Override
