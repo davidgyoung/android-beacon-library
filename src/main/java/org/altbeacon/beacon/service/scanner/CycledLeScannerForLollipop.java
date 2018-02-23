@@ -8,10 +8,12 @@ import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
+import android.content.Intent;
 import android.os.ParcelUuid;
 import android.os.SystemClock;
 import android.support.annotation.MainThread;
 import android.support.annotation.WorkerThread;
+import android.support.v4.content.LocalBroadcastManager;
 
 import org.altbeacon.beacon.BeaconManager;
 import org.altbeacon.beacon.logging.LogManager;
@@ -29,7 +31,7 @@ public class CycledLeScannerForLollipop extends CycledLeScanner {
     private BluetoothLeScanner mScanner;
     private ScanCallback leScanCallback;
     private long mBackgroundLScanStartTime = 0l;
-    private long mBackgroundLScanFirstDetectionTime = 0l;
+    private long mBackgroundLScanFirstDetectionTime = 0;
     private boolean mMainScanCycleActive = false;
     private final BeaconManager mBeaconManager;
 
@@ -176,6 +178,12 @@ public class CycledLeScannerForLollipop extends CycledLeScanner {
         } else {
             LogManager.d(TAG, "starting non-filtered scan in SCAN_MODE_LOW_LATENCY");
             settings = (new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)).build();
+            // We create wildcard scan filters that match any advertisement so that we can detect
+            // beacons in foreground mode even if the screen is off.  This is a necessary workaround
+            // for a change in Android 8.1 that blocks scan results when the screen is off unless
+            // there is a scan filter associatd with the scan.  Prior to 8.1, filters could just be
+            // left null.  The wildcard filter matches everything.
+            filters = new ScanFilterUtils().createWildcardScanFilters();
         }
 
         if (settings != null) {
@@ -320,6 +328,9 @@ public class CycledLeScannerForLollipop extends CycledLeScanner {
                 @MainThread
                 @Override
                 public void onScanFailed(int errorCode) {
+                    Intent intent = new Intent("onScanFailed");
+                    intent.putExtra("errorCode", errorCode);
+                    LocalBroadcastManager.getInstance(CycledLeScannerForLollipop.this.mContext).sendBroadcast(intent);
                     switch (errorCode) {
                         case SCAN_FAILED_ALREADY_STARTED:
                             LogManager.e(
